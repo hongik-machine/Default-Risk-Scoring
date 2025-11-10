@@ -1,0 +1,75 @@
+# ml-project/config.yaml
+
+# 재현성
+random_state: 42
+
+# 산출물 저장 폴더
+output_dir: artifacts
+
+# 데이터 설정
+data:
+  csv_path: data/credit_default_clean.csv     # 너희 CSV 경로
+  target: default.payment.next.month
+
+# 전처리/샘플링 (common/preprocessing.py에서 해석)
+preprocessing:
+  # 예시) common.preprocessing.build_preprocessor가 이 옵션을 읽어 ColumnTransformer 구성
+  scale_numeric: true            # 표준화/최소-최대 등은 구현체에서 결정
+  encode_categorical: onehot     # "onehot" / "none" 등
+  impute: simple                  # "simple" / "none"
+  # 샘플링
+  sampler:
+    type: smote                  # "smote" / "none"
+    params:
+      random_state: 42
+      k_neighbors: 5
+
+# 평가 설정
+evaluation:
+  mode: cv          # "cv" or "holdout"
+  cv: 5             # mode=cv일 때만 사용
+  test_size: 0.2    # mode=holdout일 때만 사용
+  random_state: 42
+
+# 실험할 모델들 (순서대로 실행)
+models:
+  - name: logistic_l2
+    module: models.logistic      # models/logistic.py 의 build_model 사용
+    params:
+      C: 1.0
+      penalty: l2
+      max_iter: 1000
+      class_weight: null         # 또는 "balanced"
+
+  - name: random_forest_baseline
+    module: models.random_forest # models/random_forest.py
+    params:
+      n_estimators: 400
+      max_depth: null
+      min_samples_split: 2
+      n_jobs: -1
+      random_state: 42
+
+  - name: xgb_hist
+    module: models.xgboost_lightgbm  # 같은 파일에서 xgboost 반환하도록 구현해둔 경우
+    params:
+      backend: xgboost             # 파일 내부에서 backend 스위치 (xgboost/lightgbm)
+      n_estimators: 400
+      max_depth: 5
+      learning_rate: 0.05
+      subsample: 0.8
+      colsample_bytree: 0.8
+      reg_lambda: 1.0
+      reg_alpha: 0.0
+      random_state: 42
+      n_jobs: -1
+
+  - name: mlp_tf
+    module: models.mlp             # keras/tf 모델 빌더 (sklearn wrapper 사용 권장)
+    params:
+      hidden_units: [128, 64]
+      dropout: 0.2
+      batch_size: 64
+      epochs: 30
+      learning_rate: 0.001
+      random_state: 42
