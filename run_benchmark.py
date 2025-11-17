@@ -120,7 +120,11 @@ def build_model(model_cfg: Dict[str, Any]):
 # -----------------------------
 
 # 메트릭 계산
-def compute_metrics(y_true, y_pred, y_proba=None) -> Dict[str, Any]:
+def compute_metrics(y_true, y_pred, y_proba=None, threshold=0.5) -> Dict[str, Any]:
+    # y_proba가 있고 threshold가 0.5가 아니면 y_pred를 재계산
+    if y_proba is not None and threshold != 0.5:
+        y_pred = (y_proba >= threshold).astype(int)
+
     out = {
         "accuracy": float(accuracy_score(y_true, y_pred)),
         "precision": float(precision_score(y_true, y_pred, zero_division=0)),
@@ -133,6 +137,8 @@ def compute_metrics(y_true, y_pred, y_proba=None) -> Dict[str, Any]:
     if y_proba is not None:
         out["roc_auc"] = float(roc_auc_score(y_true, y_proba))
         out["pr_auc"] = float(average_precision_score(y_true, y_proba))
+    # 결과 확인용: 적용된 threshold 기록
+    out["threshold"] = threshold
     return out
 
 
@@ -162,6 +168,10 @@ def run_holdout(pipe: Pipeline, X, y, eval_cfg: Dict[str, Any]) -> Dict[str, Any
 def run_cv(pipe: Pipeline, X, y, eval_cfg: Dict[str, Any]) -> Dict[str, Any]:
     n_splits = eval_cfg.get("cv", 5)
     seed = eval_cfg.get("random_state", 42)
+
+    # Config에서 threshold 읽어오기 (없으면 기본 0.5)
+    threshold = eval_cfg.get("threshold", 0.5)
+
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
 
     # cross_validate로 기본 점수 + 수작업 proba 메트릭까지 산출
@@ -178,7 +188,7 @@ def run_cv(pipe: Pipeline, X, y, eval_cfg: Dict[str, Any]) -> Dict[str, Any]:
         y_pred = pipe.predict(X_te)
         y_proba = pipe.predict_proba(X_te)[:, 1] if hasattr(pipe, "predict_proba") else None
 
-        m = compute_metrics(y_te, y_pred, y_proba)
+        m = compute_metrics(y_te, y_pred, y_proba, threshold=threshold)
         for k in ["accuracy", "precision", "recall", "f1"]:
             scores[k].append(m[k])
         if y_proba is not None:
