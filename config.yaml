@@ -30,6 +30,7 @@ evaluation:
   cv: 5             # mode=cv일 때만 사용
   test_size: 0.2    # mode=holdout일 때만 사용
   random_state: 42
+  threshold: 0.35
 
 # 실험할 모델들 (순서대로 실행)
 models:
