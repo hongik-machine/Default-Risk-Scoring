@@ -8,3 +8,6 @@ __pycache__/
 # 가상환경 폴더
 .venv/
 .env
+
+
+.DS_Store
