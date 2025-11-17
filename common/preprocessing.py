@@ -38,6 +38,29 @@ def basic_clean(df: pd.DataFrame, target: str) -> pd.DataFrame:
 
     return df
 
+def clean_data(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    # EDUCATION 잘못된 값 제거
+    df = df[df["EDUCATION"].isin([1, 2, 3, 4])]
+
+    # MARRIAGE 잘못된 값 제거
+    df = df[df["MARRIAGE"].isin([1, 2, 3])]
+
+    # PAY 컬럼들
+    pay_cols = [c for c in df.columns if c.startswith("PAY_")]
+
+    # PAY_0 → PAY_1 이름 변경 (UCI 문서상 PAY_0 = 최근 9월)
+    if "PAY_0" in df.columns and "PAY_1" not in df.columns:
+        df = df.rename(columns={"PAY_0": "PAY_1"})
+        pay_cols = [c for c in df.columns if c.startswith("PAY_")]
+
+    # PAY_n 값 정상 납부 통합
+    for col in pay_cols:
+        df[col] = df[col].replace({-2: 0, -1: 0, 0: 0})
+
+    return df
+
 # 안쓰이고 있는 함수
 def split_xy(df: pd.DataFrame, target: str):
     X = df.drop(columns=[target])
@@ -54,6 +77,7 @@ def infer_columns(X: pd.DataFrame) -> Tuple[List[str], List[str]]:
 
 def make_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
     """숫자: 평균 대치 / 범주: 최빈값 대치 + 원핫"""
+    num_cols, cat_cols = infer_columns(X)
     num_cols, cat_cols = infer_columns(X)
 
     numeric_proc = Pipeline(steps=[
