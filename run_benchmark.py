@@ -29,6 +29,8 @@ from sklearn.metrics import (
 
 from imblearn.pipeline import Pipeline
 
+from common import preprocessing as prep_mod
+
 
 # ---------------------------------------------------------------
 # Utils
@@ -294,6 +296,15 @@ def main(cfg_path: str):
     set_global_seed(cfg.get("random_state", 42))
 
     X, y = load_data(cfg)
+
+    # 2) X, y 같이 클리닝
+    df = X.copy()
+    df[cfg["data"]["target"]] = y
+    df = prep_mod.clean_data(df)
+
+    X = df.drop(columns=[cfg["data"]["target"]])
+    y = df[cfg["data"]["target"]]
+
     prep, sampler = build_preprocessor(cfg, X)
 
     results = []
