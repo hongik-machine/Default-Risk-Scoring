@@ -9,6 +9,29 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 
+
+# 연속형(스케일링 대상)
+CONTINUOUS_COLS = [
+    "LIMIT_BAL",
+    "AGE",
+    "BILL_AMT1", "BILL_AMT2", "BILL_AMT3",
+    "BILL_AMT4", "BILL_AMT5", "BILL_AMT6",
+    "PAY_AMT1", "PAY_AMT2", "PAY_AMT3",
+    "PAY_AMT4", "PAY_AMT5", "PAY_AMT6",
+]
+
+# 범주형(원-핫 인코딩)
+CATEGORICAL_COLS = [
+    "SEX",
+    "EDUCATION",
+    "MARRIAGE",
+]
+
+# 순서형(PAY 상태) - clean_data에서 PAY_0 → PAY_1 으로 rename 함
+ORDINAL_COLS = [
+    "PAY_1", "PAY_2", "PAY_3", "PAY_4", "PAY_5", "PAY_6",
+]
+
 # sklearn 버전에 따라 OneHotEncoder의 인자가 달라 안정화 래퍼 사용
 def _make_ohe():
     from sklearn.preprocessing import OneHotEncoder
@@ -20,26 +43,14 @@ def _make_ohe():
         return OneHotEncoder(handle_unknown="ignore", sparse=False)
 
 
-# 안쓰고 있는 함수
-def basic_clean(df: pd.DataFrame, target: str) -> pd.DataFrame:
-    """Unnamed 계열 컬럼 제거, target 정수화, 중복 제거"""
-    to_drop = [c for c in df.columns if c.lower().startswith("unnamed")]
-    if to_drop:
-        df = df.drop(columns=to_drop)
 
-    if target not in df.columns:
-        raise ValueError(f"타깃 컬럼 '{target}' 이(가) 존재하지 않음. 실제 컬럼들: {list(df.columns)}")
-
-    # 타깃 0/1 정수화
-    df[target] = pd.to_numeric(df[target], errors="coerce").fillna(0).astype(int)
-
-    # 중복 제거
-    df = df.drop_duplicates()
-
-    return df
-
+# 이상한 값(데이터의 오류) 제거
 def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+
+    # ID 제거
+    if "ID" in df.columns:
+        df = df.drop(columns=["ID"])
 
     # EDUCATION 잘못된 값 제거
     df = df[df["EDUCATION"].isin([1, 2, 3, 4])]
@@ -67,34 +78,58 @@ def split_xy(df: pd.DataFrame, target: str):
     y = df[target]
     return X, y
 
-def infer_columns(X: pd.DataFrame) -> Tuple[List[str], List[str]]:
-    num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-    cat_cols = X.select_dtypes(exclude=[np.number]).columns.tolist()
-    return num_cols, cat_cols
+
+# column의 data type - continuous / categorical / ordinal 구분
+def infer_columns(X: pd.DataFrame):
+
+    cols = set(X.columns)
+
+    cont_cols = [c for c in CONTINUOUS_COLS if c in cols]
+    cat_cols = [c for c in CATEGORICAL_COLS if c in cols]
+    ord_cols = [c for c in ORDINAL_COLS if c in cols]
+
+    return cont_cols, cat_cols, ord_cols
 
 
 
 
 def make_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
-    """숫자: 평균 대치 / 범주: 최빈값 대치 + 원핫"""
-    num_cols, cat_cols = infer_columns(X)
-    num_cols, cat_cols = infer_columns(X)
+    """
+    - continuous: mean impute + StandardScaler
+    - categorical: most_frequent impute + OneHotEncoder
+    - ordinal(PAY_*): most_frequent impute (값 그대로 사용)
+    """
 
-    numeric_proc = Pipeline(steps=[
+    # X 안에서 연속형, 범주형, 순서형 column을 자동으로 골라낸다.
+    cont_cols, cat_cols, ord_cols = infer_columns(X)
+
+    # 1) continuous
+    continuous_proc = Pipeline(steps=[
         ("imputer", SimpleImputer(strategy="mean")),
-        ("scaler", StandardScaler())
+        ("scaler", StandardScaler()),
     ])
+
+    # 2) categorical
     categorical_proc = Pipeline(steps=[
         ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("onehot", _make_ohe())
+        ("onehot", _make_ohe()),
     ])
 
+    # 3) ordinal (PAY_*): 결측만 최빈값으로 채우고 숫자는 그대로 사용
+    ordinal_proc = Pipeline(steps=[
+        ("imputer", SimpleImputer(strategy="most_frequent")),
+        # 스케일링/원핫 안 하고 값 그대로
+    ])
+
+    # 서로 다른 column 그룹에 서로 다른 전처리를 적용
     preprocessor = ColumnTransformer(
         transformers=[
-            ("num", numeric_proc, num_cols),
-            ("cat", categorical_proc, cat_cols)
+            ("cont", continuous_proc, cont_cols),
+            ("cat", categorical_proc, cat_cols),
+            ("ord", ordinal_proc, ord_cols),
         ],
         remainder="drop",
-        verbose_feature_names_out=False
+        verbose_feature_names_out=False,
     )
+
     return preprocessor
