@@ -10,11 +10,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 from datetime import datetime
 import importlib
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import numpy as np
 import pandas as pd
@@ -73,12 +72,26 @@ def load_data(cfg: Dict[str, Any]) -> tuple[pd.DataFrame, pd.Series]:
 # Build pipeline components
 # ---------------------------------------------------------------
 
-def build_preprocessor(cfg: Dict[str, Any], X: pd.DataFrame):
+def build_preprocessor(cfg: Dict[str, Any], x: pd.DataFrame):
     prep_mod = importlib.import_module("common.preprocessing")
-    prep = prep_mod.make_preprocessor(X)
+    prep = prep_mod.make_preprocessor(x)
+
+    # preprocessing 공통 설정 읽어오기
+    prep_cfg = cfg.get("preprocessing", {})
+    random_state = cfg.get("random_state", 42)
+
+    # sampler 생성
     build_sampler = getattr(prep_mod, "build_sampler", None)
-    sampler = build_sampler(cfg.get("preprocessing", {})) if callable(build_sampler) else None
-    return prep, sampler
+    sampler = None
+    if callable(build_sampler):
+        sampler = build_sampler(prep_cfg, random_state=random_state)
+    print(f"✅ 현재 적용된 Sampler: {sampler}")
+
+    # PCA
+    build_pca = getattr(prep_mod, "build_pca", None)
+    pca = build_pca(prep_cfg, random_state=random_state) if callable(build_pca) else None
+
+    return prep, sampler, pca
 
 def build_model(model_cfg: Dict[str, Any]):
     module_name = model_cfg["module"]
@@ -241,17 +254,24 @@ def visualize_results(results: List[Dict[str, Any]]) -> None:
     rows = []
     for r in results:
         name = r["model"]
+        sampler_name = r.get("sampler", "None")
+        pca_status = r.get("pca", "N/A")
+
         m = r["metrics"]
         cv = m.get("cv", {})
         te = m.get("test", {})
 
         rows.append({
             "model": name,
+            "sampler": sampler_name,
+            "pca": pca_status,
+
             # CV 기준
             "cv_f1": cv.get("f1_mean", np.nan),
             "cv_recall": cv.get("recall_mean", np.nan),
             "cv_roc_auc": cv.get("roc_auc_mean", np.nan),
             "cv_pr_auc": cv.get("pr_auc_mean", np.nan),
+
             # Test 기준
             "test_f1": te.get("f1", np.nan),
             "test_recall": te.get("recall", np.nan),
@@ -262,8 +282,9 @@ def visualize_results(results: List[Dict[str, Any]]) -> None:
     df = pd.DataFrame(rows)
 
     print("\n=== Summary (rounded) ===")
+    cols = ["model", "sampler", "pca", "cv_f1", "cv_recall", "cv_roc_auc", "test_f1", "test_recall", "test_roc_auc"]
     with pd.option_context("display.max_columns", None, "display.width", 160):
-        print(df.round(4).to_string(index=False))
+        print(df[cols].round(4).to_string(index=False))
 
     # CV 기준 플롯
     def _plot(metric: str, title: str):
@@ -366,7 +387,7 @@ def main(cfg_path: str):
     )
 
     # 3) X_train만 이용해 preprocessor fit 준비
-    prep, sampler = build_preprocessor(cfg, X_train)
+    prep, sampler, pca = build_preprocessor(cfg, X_train)
 
     results = []
 
@@ -376,14 +397,25 @@ def main(cfg_path: str):
         name = model_cfg["name"]
         clf = build_model(model_cfg)
 
+        # pipeline 단계 조립
         steps = [("prep", prep)]
+
+        # PCA
+        if pca is not None:
+            steps.append(("pca", pca))
+
+
+        # Sampler
         if sampler is not None:
             steps.append(("sampler", sampler))
+
+        # 모델 적용
         steps.append(("clf", clf))
 
         pipe = Pipeline(steps)
-        eval_cfg = cfg.get("evaluation", {})
 
+
+        eval_cfg = cfg.get("evaluation", {})
         threshold = eval_cfg.get("threshold", 0.5)
 
         # CV 모드
@@ -414,8 +446,16 @@ def main(cfg_path: str):
 
             metrics = compute_metrics(y_test, y_pred_test, y_proba_test, threshold)
 
+        # sampler 이름 추출 (없으면 "None")
+        sampler_name = sampler.__class__.__name__ if sampler else "None"
+
+        # PCA 적용 여부 저장 (원하는대로 'Used', 'None'으로 저장)
+        pca_status = "Used" if pca else "None"
+
         record = {
             "model": name,
+            "sampler": sampler_name,
+            "pca": pca_status,
             "module": model_cfg["module"],
             "params": model_cfg.get("params", {}),
             "metrics": metrics

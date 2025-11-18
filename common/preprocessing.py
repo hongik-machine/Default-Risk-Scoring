@@ -9,6 +9,11 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.decomposition import PCA
+
+from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import ClusterCentroids
+
 
 # =========================================================
 # 1. data type별로 각 column 나누기
@@ -34,6 +39,19 @@ CATEGORICAL_COLS = [
 ORDINAL_COLS = [
     "PAY_1", "PAY_2", "PAY_3", "PAY_4", "PAY_5", "PAY_6",
 ]
+
+
+# column의 data type - continuous / categorical / ordinal 구분
+def infer_columns(X: pd.DataFrame):
+
+    cols = set(X.columns)
+
+    cont_cols = [c for c in CONTINUOUS_COLS if c in cols]
+    cat_cols = [c for c in CATEGORICAL_COLS if c in cols]
+    ord_cols = [c for c in ORDINAL_COLS if c in cols]
+
+    return cont_cols, cat_cols, ord_cols
+
 
 
 
@@ -65,20 +83,9 @@ class IQRClipper(BaseEstimator, TransformerMixin):
 
 
 
-# sklearn 버전에 따라 OneHotEncoder의 인자가 달라 안정화 래퍼 사용
-# One-Hot_Encoding
-def _make_ohe():
-    from sklearn.preprocessing import OneHotEncoder
-    try:
-        # sklearn >= 1.2
-        return OneHotEncoder(handle_unknown="ignore", sparse_output=False)
-    except TypeError:
-        # sklearn < 1.2
-        return OneHotEncoder(handle_unknown="ignore", sparse=False)
-
-
-
-# 이상한 값(데이터의 오류) 제거
+# ===========================================================
+# 3. 이상한 값(데이터의 오류) 제거 - Nan 값으로 데이터가 없는 것과는 다름
+# ===========================================================
 def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
@@ -106,30 +113,50 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
-# 안쓰이고 있는 함수
-def split_xy(df: pd.DataFrame, target: str):
-    X = df.drop(columns=[target])
-    y = df[target]
-    return X, y
 
 
-# column의 data type - continuous / categorical / ordinal 구분
-def infer_columns(X: pd.DataFrame):
+# ===========================================================
+# 4. 각 데이터의 특성에 맞는 전처리 helper 함수
+# ===========================================================
+# sklearn 버전에 따라 OneHotEncoder의 인자가 달라 안정화 래퍼 사용
+# One-Hot_Encoding
+def _make_ohe():
+    from sklearn.preprocessing import OneHotEncoder
+    try:
+        # sklearn >= 1.2
+        return OneHotEncoder(handle_unknown="ignore", sparse_output=False)
+    except TypeError:
+        # sklearn < 1.2
+        return OneHotEncoder(handle_unknown="ignore", sparse=False)
 
-    cols = set(X.columns)
 
-    cont_cols = [c for c in CONTINUOUS_COLS if c in cols]
-    cat_cols = [c for c in CATEGORICAL_COLS if c in cols]
-    ord_cols = [c for c in ORDINAL_COLS if c in cols]
+# ===========================================================
+# 5. PCA 적용 - 열 줄여주기
+# ===========================================================
 
-    return cont_cols, cat_cols, ord_cols
+# config를 기준으로 PCA transformer 혹은 None을 return
+def build_pca(prep_cfg: dict, random_state: int | None = None):
+
+    pca_cfg = prep_cfg.get("pca", {})
+    use_pca = pca_cfg.get("use", False) or pca_cfg.get("use_pca", False)
+
+    if not use_pca:
+        return None
+
+    n_components = pca_cfg.get("n_components", None)
+    return PCA(
+        n_components=n_components,
+        random_state=random_state
+    )
 
 
 
-
+# ===========================================================
+# 6. ColumnTransformer 형태의 preprocessor 만들기
+# ===========================================================
 def make_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
     """
-    - continuous: mean impute + StandardScaler
+    - continuous: mean impute -> IQR outlier clipping -> StandardScaler
     - categorical: most_frequent impute + OneHotEncoder
     - ordinal(PAY_*): most_frequent impute (값 그대로 사용)
     """
@@ -150,7 +177,7 @@ def make_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
         ("onehot", _make_ohe()),
     ])
 
-    # 3) ordinal (PAY_*): 현재는 scaling 없이 원 숫자로 사용중
+    # 3) ordinal (PAY_*): scaling 없이 원 값으로
     ordinal_proc = Pipeline(steps=[
         ("imputer", SimpleImputer(strategy="most_frequent")),
         # 스케일링/원핫 안 하고 값 그대로
@@ -168,3 +195,39 @@ def make_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
     )
 
     return preprocessor
+
+
+# ===========================================================
+# 7. Sampler 적용 (SMOTE / ClusterCentroids)
+# ===========================================================
+def build_sampler(prep_cfg: dict, random_state: int | None = None):
+
+    # prep_cfg['sampler'] 설정을 읽어서 SMOTE, ClusterCentroids 혹은 None을 반환
+    sampler_cfg = prep_cfg.get("sampler", {})
+    method = sampler_cfg.get("method",  None)  # 'smote', 'cluster_centroids' 등
+
+    # sampler를 사용하지 않는 경우
+    if not method or method == "none":
+        return None
+
+    params = sampler_cfg.get("params", {}).copy()
+
+    # random_state가 params에 없으면 기본값 주입
+    if "random_state" not in params and random_state is not None:
+        params["random_state"] = random_state
+
+    # SMOTE (오버샘플링)
+    if method == "smote":
+        # 필요하다면 k_neighbors 등의 파라미터를 sampler_cfg에서 꺼내서 쓸 수 있음
+        # strategy = sampler_cfg.get("strategy", "auto")
+        return SMOTE(**params)
+
+    # Cluster Centroids (언더샘플링)
+    elif method == "cluster_centroids":
+        params.pop("k_neighbors", None)
+
+        return ClusterCentroids(**params)
+
+    # 그 외 정의되지 않은 method
+    else:
+        raise ValueError(f"Unknown sampler method: {method}")
