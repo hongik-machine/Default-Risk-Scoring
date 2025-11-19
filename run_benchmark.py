@@ -10,11 +10,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 from datetime import datetime
 import importlib
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import numpy as np
 import pandas as pd
@@ -73,12 +72,26 @@ def load_data(cfg: Dict[str, Any]) -> tuple[pd.DataFrame, pd.Series]:
 # Build pipeline components
 # ---------------------------------------------------------------
 
-def build_preprocessor(cfg: Dict[str, Any], X: pd.DataFrame):
+def build_preprocessor(cfg: Dict[str, Any], x: pd.DataFrame):
     prep_mod = importlib.import_module("common.preprocessing")
-    prep = prep_mod.make_preprocessor(X)
+    prep = prep_mod.make_preprocessor(x)
+
+    # preprocessing 공통 설정 읽어오기
+    prep_cfg = cfg.get("preprocessing", {})
+    random_state = cfg.get("random_state", 42)
+
+    # sampler 생성
     build_sampler = getattr(prep_mod, "build_sampler", None)
-    sampler = build_sampler(cfg.get("preprocessing", {})) if callable(build_sampler) else None
-    return prep, sampler
+    sampler = None
+    if callable(build_sampler):
+        sampler = build_sampler(prep_cfg, random_state=random_state)
+    print(f"✅ 현재 적용된 Sampler: {sampler}")
+
+    # PCA
+    build_pca = getattr(prep_mod, "build_pca", None)
+    pca = build_pca(prep_cfg, random_state=random_state) if callable(build_pca) else None
+
+    return prep, sampler, pca
 
 def build_model(model_cfg: Dict[str, Any]):
     module_name = model_cfg["module"]
@@ -159,37 +172,32 @@ def compute_metrics(y_true, y_pred, y_proba=None, threshold=0.5) -> Dict[str, An
 
 
 # ---------------------------------------------------------------
-# Holdout
+# Holdout 버전의 학습
 # ---------------------------------------------------------------
 
-def run_holdout(pipe: Pipeline, X, y, eval_cfg):
-    test_size = eval_cfg.get("test_size", 0.2)
-    seed = eval_cfg.get("random_state", 42)
+def run_holdout(pipe: Pipeline, X_train, y_train, X_test, y_test, eval_cfg):
 
-    X_tr, X_te, y_tr, y_te = train_test_split(
-        X, y, test_size=test_size, random_state=seed, stratify=y
+    threshold = eval_cfg.get("threshold", 0.5)
+
+    # 1) Train 전체로 모델 fit
+    pipe.fit(X_train, y_train)
+
+    # 2) Test로 예측
+    y_pred = pipe.predict(X_test)
+    y_proba = (
+        pipe.predict_proba(X_test)[:, 1]
+        if hasattr(pipe, "predict_proba")
+        else None
     )
 
-    pipe.fit(X_tr, y_tr)
-    y_pred = pipe.predict(X_te)
-    y_proba = pipe.predict_proba(X_te)[:, 1] if hasattr(pipe, "predict_proba") else None
-
-    metrics = compute_metrics(y_te, y_pred, y_proba)
-
-    # Threshold tuning curve
-    if y_proba is not None:
-        best_t, best_f1 = plot_threshold_curve(
-            y_te, y_proba,
-            pipe.named_steps["clf"].__class__.__name__
-        )
-        metrics["best_threshold"] = best_t
-        metrics["best_f1_at_threshold"] = best_f1
+    # 3) 기본 Metrics 계산
+    metrics = compute_metrics(y_test, y_pred, y_proba, threshold)
 
     return metrics
 
 
 # ---------------------------------------------------------------
-# Cross-validation
+# Cross-validation 버전의 학습
 # ---------------------------------------------------------------
 
 def run_cv(pipe: Pipeline, X, y, eval_cfg):
@@ -243,30 +251,43 @@ def run_cv(pipe: Pipeline, X, y, eval_cfg):
 # ---------------------------------------------------------------
 
 def visualize_results(results: List[Dict[str, Any]]) -> None:
-
-    def _get(m: Dict[str, Any], key: str):
-        return m.get(f"{key}_mean", m.get(key, np.nan))
-
     rows = []
     for r in results:
+        name = r["model"]
+        sampler_name = r.get("sampler", "None")
+        pca_status = r.get("pca", "N/A")
+
         m = r["metrics"]
+        cv = m.get("cv", {})
+        te = m.get("test", {})
+
         rows.append({
-            "model": r["model"],
-            "accuracy": _get(m, "accuracy"),
-            "precision": _get(m, "precision"),
-            "recall": _get(m, "recall"),
-            "f1": _get(m, "f1"),
-            "roc_auc": _get(m, "roc_auc"),
-            "pr_auc": _get(m, "pr_auc"),
+            "model": name,
+            "sampler": sampler_name,
+            "pca": pca_status,
+
+            # CV 기준
+            "cv_f1": cv.get("f1_mean", np.nan),
+            "cv_recall": cv.get("recall_mean", np.nan),
+            "cv_roc_auc": cv.get("roc_auc_mean", np.nan),
+            "cv_pr_auc": cv.get("pr_auc_mean", np.nan),
+
+            # Test 기준
+            "test_f1": te.get("f1", np.nan),
+            "test_recall": te.get("recall", np.nan),
+            "test_roc_auc": te.get("roc_auc", np.nan),
+            "test_pr_auc": te.get("pr_auc", np.nan)
         })
 
     df = pd.DataFrame(rows)
 
     print("\n=== Summary (rounded) ===")
-    with pd.option_context("display.max_columns", None, "display.width", 120):
-        print(df.round(4).to_string(index=False))
+    cols = ["model", "sampler", "pca", "cv_f1", "cv_recall", "cv_roc_auc", "test_f1", "test_recall", "test_roc_auc"]
+    with pd.option_context("display.max_columns", None, "display.width", 160):
+        print(df[cols].round(4).to_string(index=False))
 
-    def _plot_metric(metric: str, title: str):
+    # CV 기준 플롯
+    def _plot(metric: str, title: str):
         sub = df[["model", metric]].dropna()
         if sub.empty:
             return
@@ -279,11 +300,62 @@ def visualize_results(results: List[Dict[str, Any]]) -> None:
         plt.xticks(rotation=20)
         plt.tight_layout()
 
-    _plot_metric("roc_auc", "ROC-AUC by Model")
-    _plot_metric("pr_auc", "PR-AUC by Model")
-    _plot_metric("f1", "F1 Score by Model")
+    # CV 기준
+    _plot("cv_roc_auc", "CV ROC-AUC by Model")
+    _plot("cv_pr_auc", "CV PR-AUC by Model")
+    _plot("cv_f1", "CV F1 by Model")
+    _plot("cv_recall", "CV Recall by Model")
+
+    # Test 기준
+    _plot("test_roc_auc", "Test ROC-AUC by Model")
+    _plot("test_pr_auc", "Test PR-AUC by Model")
+    _plot("test_f1", "Test F1 by Model")
+    _plot("test_recall", "Test Recall by Model")
 
     plt.show()
+
+
+
+def print_metrics_pretty(name: str, metrics: dict):
+    print(f"\n=== {name} ===")
+
+    # 1) CV 결과 (있으면)
+    if "cv" in metrics:
+        cv = metrics["cv"]
+        print("[CV] mean ± std")
+        print(f"  accuracy : {cv['accuracy_mean']:.4f} ± {cv['accuracy_std']:.4f}")
+        print(f"  precision: {cv['precision_mean']:.4f} ± {cv['precision_std']:.4f}")
+        print(f"  recall   : {cv['recall_mean']:.4f} ± {cv['recall_std']:.4f}")
+        print(f"  f1       : {cv['f1_mean']:.4f} ± {cv['f1_std']:.4f}")
+        if "roc_auc_mean" in cv:
+            print(f"  roc_auc  : {cv['roc_auc_mean']:.4f} ± {cv['roc_auc_std']:.4f}")
+        if "pr_auc_mean" in cv:
+            print(f"  pr_auc   : {cv['pr_auc_mean']:.4f} ± {cv['pr_auc_std']:.4f}")
+        if "best_threshold" in cv:
+            print(f"  best_th  : {cv['best_threshold']:.3f} (F1={cv['best_f1_at_threshold']:.4f})")
+
+    # 2) Test 결과 (있으면)
+    if "test" in metrics:
+        te = metrics["test"]
+        print("\n[Test]")
+        print(f"  accuracy : {te['accuracy']:.4f}")
+        print(f"  precision: {te['precision']:.4f}")
+        print(f"  recall   : {te['recall']:.4f}")
+        print(f"  f1       : {te['f1']:.4f}")
+        if "roc_auc" in te:
+            print(f"  roc_auc  : {te['roc_auc']:.4f}")
+        if "pr_auc" in te:
+            print(f"  pr_auc   : {te['pr_auc']:.4f}")
+        print(f"  pos_rate : {te['pos_rate']:.4f}")
+        print(f"  threshold: {te['threshold']:.3f}")
+
+        # 혼동행렬 & classification report는 따로 보기 좋게
+        print("\n  Confusion matrix:")
+        cm = np.array(te["confusion_matrix"])
+        print(cm)
+
+        print("\n  Classification report:")
+        print(te["classification_report"])
 
 
 # ---------------------------------------------------------------
@@ -292,12 +364,11 @@ def visualize_results(results: List[Dict[str, Any]]) -> None:
 
 def main(cfg_path: str):
 
+    # 1) 데이터셋 load + clean
     cfg = load_config(cfg_path)
     set_global_seed(cfg.get("random_state", 42))
-
     X, y = load_data(cfg)
 
-    # 2) X, y 같이 클리닝
     df = X.copy()
     df[cfg["data"]["target"]] = y
     df = prep_mod.clean_data(df)
@@ -305,37 +376,94 @@ def main(cfg_path: str):
     X = df.drop(columns=[cfg["data"]["target"]])
     y = df[cfg["data"]["target"]]
 
-    prep, sampler = build_preprocessor(cfg, X)
+
+    # 2) train/test split (1회)
+    eval_cfg = cfg.get("evaluation", {})
+    test_size = eval_cfg.get("test_size", 0.25)
+    seed = eval_cfg.get("random_state", 42)
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, stratify=y, random_state=seed
+    )
+
+    # 3) X_train만 이용해 preprocessor fit 준비
+    prep, sampler, pca = build_preprocessor(cfg, X_train)
 
     results = []
 
+
+    # 4) 4개의 모델을 평가하는 loop
     for model_cfg in cfg["models"]:
         name = model_cfg["name"]
         clf = build_model(model_cfg)
 
+        # pipeline 단계 조립
         steps = [("prep", prep)]
+
+        # PCA
+        if pca is not None:
+            steps.append(("pca", pca))
+
+
+        # Sampler
         if sampler is not None:
             steps.append(("sampler", sampler))
+
+        # 모델 적용
         steps.append(("clf", clf))
 
         pipe = Pipeline(steps)
-        eval_cfg = cfg.get("evaluation", {})
 
+
+        eval_cfg = cfg.get("evaluation", {})
+        threshold = eval_cfg.get("threshold", 0.5)
+
+        # CV 모드
         if eval_cfg.get("mode", "cv") == "cv":
-            metrics = run_cv(pipe, X, y, eval_cfg)
+            cv_metrics = run_cv(pipe, X_train, y_train, eval_cfg)
+
+            # CV 끝난 뒤, train 전체로 재학습 → test로 최종 점수 계산 (새로 추가된 부분)
+
+            pipe.fit(X_train, y_train)
+            y_proba_test = pipe.predict_proba(X_test)[:, 1]
+            y_pred_test = (y_proba_test >= threshold).astype(int)
+
+            test_metrics = compute_metrics(
+                y_test, y_pred_test, y_proba_test, threshold
+            )
+
+            metrics = {
+                "cv": cv_metrics,
+                "test": test_metrics,
+            }
+
+        # holdout 모드
         else:
-            metrics = run_holdout(pipe, X, y, eval_cfg)
+            pipe.fit(X_train, y_train)
+
+            y_proba_test = pipe.predict_proba(X_test)[:, 1]
+            y_pred_test = (y_proba_test >= threshold).astype(int)
+
+            metrics = compute_metrics(y_test, y_pred_test, y_proba_test, threshold)
+
+        # sampler 이름 추출 (없으면 "None")
+        sampler_name = sampler.__class__.__name__ if sampler else "None"
+
+        # PCA 적용 여부 저장 (원하는대로 'Used', 'None'으로 저장)
+        pca_status = "Used" if pca else "None"
 
         record = {
             "model": name,
+            "sampler": sampler_name,
+            "pca": pca_status,
             "module": model_cfg["module"],
             "params": model_cfg.get("params", {}),
             "metrics": metrics
         }
-        results.append(record)
 
-        print(f"\n=== {name} ===")
-        print(json.dumps(metrics, indent=2, ensure_ascii=False))
+
+        results.append(record)
+        print_metrics_pretty(name, metrics)
 
     visualize_results(results)
 
