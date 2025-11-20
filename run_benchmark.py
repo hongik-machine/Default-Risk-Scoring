@@ -14,9 +14,12 @@ import os
 from datetime import datetime
 import importlib
 from typing import Any, Dict, List
+import json
 
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')  # 화면에 띄우지 않고 내부적으로만 처리하도록 설정 (또는 'TkAgg')
 import matplotlib.pyplot as plt
 
 from sklearn.model_selection import StratifiedKFold, train_test_split
@@ -362,7 +365,8 @@ def print_metrics_pretty(name: str, metrics: dict):
 # Runner
 # ---------------------------------------------------------------
 
-def main(cfg_path: str):
+# [NEW] 파라미터 추가
+def main(cfg_path: str, use_tuned: bool = False):
 
     # 1) 데이터셋 load + clean
     cfg = load_config(cfg_path)
@@ -392,9 +396,60 @@ def main(cfg_path: str):
     results = []
 
 
+    # =========================================================
+    # [NEW] 튜닝된 하이퍼파라미터 불러오기(조건부 실행
+    # =========================================================
+    tuned_params_dict = {}
+
+    # ★ use_tuned가 True일 때만 파일을 찾습니다!
+    if use_tuned:
+        best_params_path = "models/best_hyperparameters.json"
+        if os.path.exists(best_params_path):
+            print(f"\n [Tuned Mode] 튜닝된 파라미터 파일을 로드합니다: {best_params_path}")
+            try:
+                with open(best_params_path, "r") as f:
+                    tuned_params_dict = json.load(f)
+            except Exception as e:
+                print(f"  파라미터 로드 중 오류 발생: {e}")
+        else:
+            print("\n [Tuned Mode] 파일이 없어 기본 설정을 사용합니다.")
+    else:
+        print("\n [Baseline Mode] 튜닝 없이 기본 설정(config.yaml)으로 실행합니다.")
+    # =========================================================
+
     # 4) 4개의 모델을 평가하는 loop
     for model_cfg in cfg["models"]:
         name = model_cfg["name"]
+
+        # =========================================================
+        # [NEW] 튜닝 파라미터 적용 로직 (딕셔너리에 값이 있을 때만)
+        # =========================================================
+        # 만약 JSON 파일에 해당 모델 이름(name)이 있다면 파라미터를 덮어씌웁니다.
+        if name in tuned_params_dict:
+            print(f"    [{name}] 튜닝된 최적 파라미터를 적용합니다.")
+
+            # 기존 config의 params를 가져와서
+            current_params = model_cfg.get("params", {})
+
+            # 튜닝된 값으로 업데이트 (덮어쓰기)
+            # tuned_params_dict[name]['best_params'] 구조라고 가정
+            best_p = tuned_params_dict[name].get("best_params", {})
+            current_params.update(best_p)
+
+            # 모델 설정에 다시 저장
+            model_cfg["params"] = current_params
+
+        else:
+            # 튜닝 모드가 꺼져있거나(use_tuned=False), 해당 모델의 튜닝 결과가 없으면 여기로 옴
+            if use_tuned:
+                print(f"  [{name}] 튜닝 정보가 없어 기본 설정(config.yaml)을 사용합니다.")
+            else:
+            # Baseline 모드일 때는 조용히 기본값 사용
+                pass
+        # =========================================================
+
+
+
         clf = build_model(model_cfg)
 
         # pipeline 단계 조립
@@ -471,5 +526,10 @@ def main(cfg_path: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", "-c", type=str, default="config.yaml")
+    # [NEW] 튜닝된 파라미터를 쓸지 말지 결정하는 스위치 추가
+    parser.add_argument("--tuned", action="store_true", help="Use tuned hyperparameters if available")
+
     args = parser.parse_args()
-    main(args.config)
+
+    #main 함수에 tuned 옵션값(True/False)도 같이 넘겨줌
+    main(args.config, args.tuned)
