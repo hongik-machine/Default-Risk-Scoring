@@ -8,47 +8,57 @@ output_dir: artifacts
 
 # 데이터 설정
 data:
-  file_path: "default of credit card clients.xls"    # 너희 CSV 경로
+  file_path: "default of credit card clients.xls"
   target: "default payment next month"
 
-# 전처리/샘플링 (common/preprocessing.py에서 해석)
+# 전처리/샘플링
 preprocessing:
-  scale_numeric: true            # 표준화/최소-최대 등은 구현체에서 결정
-  encode_categorical: onehot     # "onehot" / "none" 등
-  impute: simple                  # "simple" / "none"
-  # 샘플링
+  scale_numeric: true
+  encode_categorical: onehot
+  impute: simple
   sampler:
-    method: none              # "smote" / "none" / "cluster_centroids"
+    method: none
     params:
       random_state: 42
-      k_neighbors: 5     # smote에서만 사용하는 값이기에 cluster centroids를 사용할 때는 제거해버림
-  # PCA 옵션
+      k_neighbors: 5
   pca:
     use: true
-    n_components: 12 # 주성분 개수 - 주성분 12개는 원 데이터의 99%를 반영한다.
+    n_components: 12
 
 # 평가 설정
 evaluation:
-  mode: cv          # "cv" or "holdout"
-  cv: 5             # mode=cv일 때만 사용
-  test_size: 0.2    # mode=holdout일 때만 사용
+  mode: cv
+  cv: 5
+  test_size: 0.2
   random_state: 42
   threshold: 0.35
 
-# 실험할 모델들 (순서대로 실행)
+# 모델들
 models:
+  # -------------------------------------------------------
+  # LOGISTIC REGRESSION (L2)
+  # -------------------------------------------------------
   - name: logistic_l2
-    module: models.logistic_regression     # models/logistic.py 의 build_model 사용
+    module: models.logistic_regression
     params:
       C: 0.5
       penalty: l2
       max_iter: 1000
-      class_weight: null         # 또는 "balanced"
+      class_weight: null
       random_state: 42
       tol: 0.001
 
+    tuning_params:
+      clf__C: [0.001, 0.01, 0.1, 1, 10, 100]
+      clf__penalty: ["l2"]
+      clf__class_weight: [null, "balanced"]
+      clf__tol: [0.0001, 0.001, 0.01]
+
+  # -------------------------------------------------------
+  # RANDOM FOREST
+  # -------------------------------------------------------
   - name: random_forest_baseline
-    module: models.random_forest # models/random_forest.py
+    module: models.random_forest
     params:
       n_estimators: 400
       max_depth: null
@@ -56,8 +66,18 @@ models:
       n_jobs: -1
       random_state: 42
 
+    tuning_params:
+      clf__n_estimators: [100, 200, 300, 400, 600]
+      clf__max_depth: [null, 5, 10, 20, 30]
+      clf__min_samples_split: [2, 5, 10]
+      clf__min_samples_leaf: [1, 2, 4]
+      clf__class_weight: [null, "balanced", "balanced_subsample"]
+
+  # -------------------------------------------------------
+  # XGBOOST
+  # -------------------------------------------------------
   - name: xgb_baseline
-    module: models.xgb  # 같은 파일에서 xgboost 반환하도록 구현해둔 경우
+    module: models.xgb
     params:
       n_estimators: 400
       max_depth: 5
@@ -69,8 +89,21 @@ models:
       random_state: 42
       n_jobs: -1
 
+    tuning_params:
+      clf__n_estimators: [200, 300, 400, 600]
+      clf__learning_rate: [0.01, 0.03, 0.05, 0.1]
+      clf__max_depth: [3, 5, 7]
+      clf__subsample: [0.6, 0.8, 1.0]
+      clf__colsample_bytree: [0.6, 0.8, 1.0]
+      clf__reg_lambda: [0.1, 1.0, 5.0, 10.0]
+      clf__reg_alpha: [0.0, 0.01, 0.1]
+      clf__scale_pos_weight: [1, 2, 3, 5]
+
+  # -------------------------------------------------------
+  # NEURAL NETWORK (MLP)
+  # -------------------------------------------------------
   - name: neural_network_baseline
-    module: models.neural_network           # keras/tf 모델 빌더 (sklearn wrapper 사용 권장)
+    module: models.neural_network
     params:
       hidden_units: [128, 64]
       dropout: 0.2
@@ -78,3 +111,10 @@ models:
       epochs: 30
       learning_rate: 0.001
       random_state: 42
+
+    tuning_params:
+      clf__model__hidden_units: [[128, 64], [256, 128], [64, 32]]
+      clf__model__dropout: [0.0, 0.2, 0.3]
+      clf__optimizer__learning_rate: [0.0005, 0.001, 0.005]
+      clf__batch_size: [32, 64, 128]
+      clf__epochs: [20, 30, 40]

@@ -1,0 +1,40 @@
+{
+    "logistic_l2": {
+        "best_params": {
+            "penalty": "l2",
+            "class_weight": "balanced",
+            "C": 0.01
+        },
+        "best_score": 0.533161237335189
+    },
+    "random_forest_baseline": {
+        "best_params": {
+            "n_estimators": 100,
+            "min_samples_split": 5,
+            "max_depth": 10,
+            "class_weight": "balanced"
+        },
+        "best_score": 0.5417063526151931
+    },
+    "xgb_baseline": {
+        "best_params": {
+            "scale_pos_weight": 3.481453444360333,
+            "reg_lambda": 0.1,
+            "n_estimators": 100,
+            "max_depth": 3,
+            "learning_rate": 0.1
+        },
+        "best_score": 0.5387859055286282
+    },
+    "neural_network_baseline": {
+        "best_params": {
+            "learning_rate_init": 0.01,
+            "hidden_layer_sizes": [
+                100
+            ],
+            "alpha": 0.0001,
+            "activation": "tanh"
+        },
+        "best_score": 0.475346984175179
+    }
+}
