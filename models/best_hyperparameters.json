@@ -28,13 +28,16 @@
     },
     "neural_network_baseline": {
         "best_params": {
-            "learning_rate_init": 0.01,
+            "learning_rate_init": 0.00031622776601683794,
             "hidden_layer_sizes": [
-                100
+                256,
+                128,
+                64
             ],
-            "alpha": 0.0001,
-            "activation": "tanh"
+            "batch_size": 256,
+            "alpha": 1e-05,
+            "activation": "relu"
         },
-        "best_score": 0.475346984175179
+        "best_score": 0.4886422152735847
     }
 }
