@@ -130,14 +130,39 @@ def main():
 
         # 4. neural_network_baseline (MLPClassifier)
         'neural_network_baseline': {
-            'model': MLPClassifier(random_state=seed, early_stopping=True),
+            'model': MLPClassifier(
+                random_state=seed,
+                early_stopping=True,
+                max_iter=300,      # 너무 작으면 수렴 못해서 warning 뜰 수 있어서 넉넉하게
+                solver="adam"      # 기본값, 신경망에서 거의 표준
+            ),
             'params': {
-                'clf__hidden_layer_sizes': [(50,), (100,), (128, 64)],
+                # 1) 은닉층 구조: 1~3층, 64~256 유닛
+                'clf__hidden_layer_sizes': [
+                    (64,),
+                    (128,),
+                    (256,),
+                    (128, 64),
+                    (256, 128),
+                    (256, 128, 64),
+                ],
+
+                # 2) 활성함수: ReLU 위주, tanh도 한 번 본다
                 'clf__activation': ['relu', 'tanh'],
-                'clf__alpha': [0.0001, 0.001, 0.01],
-                'clf__learning_rate_init': [0.001, 0.01]
+
+                # 3) L2 정규화 강도 (alpha): 1e-5 ~ 1e-2
+                #   logspace를 쓰면 값이 골고루 퍼짐
+                'clf__alpha': np.logspace(-5, -2, 5),
+                # => [1e-5, 3.16e-5, 1e-4, 3.16e-4, 1e-3] 이런 식
+
+                # 4) 초기 학습률: 1e-4 ~ 1e-2
+                'clf__learning_rate_init': np.logspace(-4, -2, 5),
+                # => [1e-4, 3.16e-4, 1e-3, 3.16e-3, 1e-2]
+
+                # 5) 배치 사이즈: 너무 작지도, 너무 크지도 않게
+                'clf__batch_size': [64, 128, 256],
             }
-        }
+}
     }
 
     best_results = {}
