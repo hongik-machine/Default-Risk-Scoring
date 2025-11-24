@@ -22,7 +22,7 @@ preprocessing:
       random_state: 42
       k_neighbors: 5
   pca:
-    use: true
+    use: false
     n_components: 12
 
 # 평가 설정
@@ -31,28 +31,21 @@ evaluation:
   cv: 5
   test_size: 0.2
   random_state: 42
-  threshold: 0.35
+  threshold: 0.273
 
-# 모델들
+
+
+  # 모델들 -------------------------------------------------------
 models:
-  # -------------------------------------------------------
-  # LOGISTIC REGRESSION (L2)
-  # -------------------------------------------------------
   - name: logistic_l2
-    module: models.logistic_regression
+    module: models.logistic_regression     # models/logistic.py 의 build_model 사용
     params:
       C: 0.5
       penalty: l2
       max_iter: 1000
-      class_weight: null
+      class_weight: null         # 또는 "balanced"
       random_state: 42
       tol: 0.001
-
-    tuning_params:
-      clf__C: [0.001, 0.01, 0.1, 1, 10, 100]
-      clf__penalty: ["l2"]
-      clf__class_weight: [null, "balanced"]
-      clf__tol: [0.0001, 0.001, 0.01]
 
   # -------------------------------------------------------
   # RANDOM FOREST
