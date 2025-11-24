@@ -1,4 +1,4 @@
-# src/tuning.py
+# src/tuning.pyㅇ
 import pandas as pd
 import numpy as np
 import json
@@ -187,7 +187,7 @@ def main():
             pipeline,
             model_conf['params'],
             n_iter=10,  # 랜덤 탐색 횟수
-            scoring='f1',  # 평가 지표
+            scoring='pr_auc',  # 평가 지표
             cv=3,
             n_jobs=-1,
             verbose=1,
