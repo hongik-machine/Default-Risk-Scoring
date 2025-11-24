@@ -27,17 +27,14 @@
         "best_score": 0.5387859055286282
     },
     "neural_network_baseline": {
-        "best_params": {
-            "learning_rate_init": 0.00031622776601683794,
-            "hidden_layer_sizes": [
-                256,
-                128,
-                64
-            ],
-            "batch_size": 256,
-            "alpha": 1e-05,
-            "activation": "relu"
-        },
-        "best_score": 0.4886422152735847
-    }
+  "best_params": {
+    "learning_rate_init": 0.00031622776601683794,
+    "hidden_layer_sizes": [256, 128, 64],
+    "batch_size": 64,
+    "alpha": 0.000316,
+    "activation": "relu"
+  },
+  "best_score": 0.4886422152735847
+}
+
 }
